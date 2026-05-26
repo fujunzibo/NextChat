@@ -546,6 +546,17 @@ export const useChatStore = createPersistStore(
         const messages = session.messages.slice();
         const totalMessageCount = session.messages.length;
 
+        // OneRouter 测试请求仅含 messages，不注入 system/memory/context
+        if (
+          modelConfig.model === "auto" ||
+          modelConfig.model === "default" ||
+          !modelConfig.model
+        ) {
+          return messages
+            .slice(clearContextIndex)
+            .filter((m) => !m.isError && getMessageTextContent(m).length > 0);
+        }
+
         // in-context prompts
         const contextPrompts = session.mask.context.slice();
 

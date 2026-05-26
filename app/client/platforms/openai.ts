@@ -1,6 +1,7 @@
 "use client";
 // azure and openai, using same models. so using same LLMApi.
 import {
+  ACCESS_CODE_PREFIX,
   ApiPath,
   OPENAI_BASE_URL,
   DEFAULT_MODELS,
@@ -28,12 +29,14 @@ import { ModelSize, DalleQuality, DalleStyle } from "@/app/typing";
 
 import {
   ChatOptions,
+  getBearerToken,
   getHeaders,
   LLMApi,
   LLMModel,
   LLMUsage,
   MultimodalContent,
   SpeechOptions,
+  validString,
 } from "../api";
 import Locale from "../../locales";
 import { getClientConfig } from "@/app/config/client";
@@ -60,13 +63,51 @@ export interface RequestPayload {
     content: string | MultimodalContent[];
   }[];
   stream?: boolean;
-  model: string;
-  temperature: number;
-  presence_penalty: number;
-  frequency_penalty: number;
-  top_p: number;
+  model?: string;
+  temperature?: number;
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  top_p?: number;
   max_tokens?: number;
   max_completion_tokens?: number;
+}
+
+/** OneRouter 等兼容网关：仅 messages，与官方 OpenAI 测试请求一致 */
+export interface GatewayRequestPayload {
+  messages: {
+    role: "developer" | "system" | "user" | "assistant";
+    content: string;
+  }[];
+}
+
+function buildGatewayMessages(
+  messages: ChatOptions["messages"],
+): GatewayRequestPayload["messages"] {
+  return messages
+    .map((m) => ({
+      role: m.role,
+      content: getMessageTextContent(m),
+    }))
+    .filter((m) => m.content.length > 0);
+}
+
+/** 与 PowerShell 测试一致：仅 Content-Type + Authorization */
+function getGatewayHeaders(): Record<string, string> {
+  const accessStore = useAccessStore.getState();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json; charset=utf-8",
+  };
+  if (validString(accessStore.openaiApiKey)) {
+    headers.Authorization = getBearerToken(accessStore.openaiApiKey);
+  } else if (
+    accessStore.enabledAccessControl() &&
+    validString(accessStore.accessCode)
+  ) {
+    headers.Authorization = getBearerToken(
+      ACCESS_CODE_PREFIX + accessStore.accessCode,
+    );
+  }
+  return headers;
 }
 
 export interface DalleRequestPayload {
@@ -188,19 +229,26 @@ export class ChatGPTApi implements LLMApi {
       ...useAppConfig.getState().modelConfig,
       ...useChatStore.getState().currentSession().mask.modelConfig,
       ...{
-        model: options.config.model,
+        model: options.config.model || "auto",
         providerName: options.config.providerName,
       },
     };
 
-    let requestPayload: RequestPayload | DalleRequestPayload;
+    let requestPayload:
+      | RequestPayload
+      | DalleRequestPayload
+      | GatewayRequestPayload;
 
-    const isDalle3 = _isDalle3(options.config.model);
+    const isDalle3 = _isDalle3(modelConfig.model);
+    const useGatewayPayload =
+      modelConfig.providerName === ServiceProvider.OpenAI && !isDalle3;
+
     const isO1OrO3 =
-      options.config.model.startsWith("o1") ||
-      options.config.model.startsWith("o3") ||
-      options.config.model.startsWith("o4-mini");
-    const isGpt5 =  options.config.model.startsWith("gpt-5");
+      !useGatewayPayload &&
+      (modelConfig.model.startsWith("o1") ||
+        modelConfig.model.startsWith("o3") ||
+        modelConfig.model.startsWith("o4-mini"));
+    const isGpt5 = !useGatewayPayload && modelConfig.model.startsWith("gpt-5");
     if (isDalle3) {
       const prompt = getMessageTextContent(
         options.messages.slice(-1)?.pop() as any,
@@ -215,8 +263,12 @@ export class ChatGPTApi implements LLMApi {
         quality: options.config?.quality ?? "standard",
         style: options.config?.style ?? "vivid",
       };
+    } else if (useGatewayPayload) {
+      requestPayload = {
+        messages: buildGatewayMessages(options.messages),
+      };
     } else {
-      const visionModel = isVisionModel(options.config.model);
+      const visionModel = isVisionModel(modelConfig.model);
       const messages: ChatOptions["messages"] = [];
       for (const v of options.messages) {
         const content = visionModel
@@ -231,7 +283,7 @@ export class ChatGPTApi implements LLMApi {
         messages,
         stream: options.config.stream,
         model: modelConfig.model,
-        temperature: (!isO1OrO3 && !isGpt5) ? modelConfig.temperature : 1,
+        temperature: !isO1OrO3 && !isGpt5 ? modelConfig.temperature : 1,
         presence_penalty: !isO1OrO3 ? modelConfig.presence_penalty : 0,
         frequency_penalty: !isO1OrO3 ? modelConfig.frequency_penalty : 0,
         top_p: !isO1OrO3 ? modelConfig.top_p : 1,
@@ -240,11 +292,10 @@ export class ChatGPTApi implements LLMApi {
       };
 
       if (isGpt5) {
-  	// Remove max_tokens if present
-  	delete requestPayload.max_tokens;
-  	// Add max_completion_tokens (or max_completion_tokens if that's what you meant)
-  	requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
-
+        // Remove max_tokens if present
+        delete requestPayload.max_tokens;
+        // Add max_completion_tokens (or max_completion_tokens if that's what you meant)
+        requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
       } else if (isO1OrO3) {
         // by default the o1/o3 models will not attempt to produce output that includes markdown formatting
         // manually add "Formatting re-enabled" developer message to encourage markdown inclusion in model responses
@@ -258,16 +309,16 @@ export class ChatGPTApi implements LLMApi {
         requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
       }
 
-
       // add max_tokens to vision model
-      if (visionModel && !isO1OrO3 && ! isGpt5) {
+      if (visionModel && !isO1OrO3 && !isGpt5) {
         requestPayload["max_tokens"] = Math.max(modelConfig.max_tokens, 4000);
       }
     }
 
     console.log("[Request] openai payload: ", requestPayload);
 
-    const shouldStream = !isDalle3 && !!options.config.stream;
+    const shouldStream =
+      !isDalle3 && !useGatewayPayload && !!options.config.stream;
     const controller = new AbortController();
     options.onController?.(controller);
 
@@ -403,11 +454,16 @@ export class ChatGPTApi implements LLMApi {
           options,
         );
       } else {
+        const gatewayMessages = useGatewayPayload
+          ? buildGatewayMessages(options.messages)
+          : null;
         const chatPayload = {
           method: "POST",
-          body: JSON.stringify(requestPayload),
+          body: useGatewayPayload
+            ? JSON.stringify({ messages: gatewayMessages })
+            : JSON.stringify(requestPayload),
           signal: controller.signal,
-          headers: getHeaders(),
+          headers: useGatewayPayload ? getGatewayHeaders() : getHeaders(),
         };
 
         // make a fetch request
@@ -499,36 +555,57 @@ export class ChatGPTApi implements LLMApi {
       return DEFAULT_MODELS.slice();
     }
 
-    const res = await fetch(this.path(OpenaiPath.ListModelPath), {
-      method: "GET",
-      headers: {
-        ...getHeaders(),
-      },
-    });
+    try {
+      const res = await fetch(this.path(OpenaiPath.ListModelPath), {
+        method: "GET",
+        headers: {
+          ...getHeaders(),
+        },
+      });
 
-    const resJson = (await res.json()) as OpenAIListModelResponse;
-    const chatModels = resJson.data?.filter(
-      (m) => m.id.startsWith("gpt-") || m.id.startsWith("chatgpt-"),
-    );
-    console.log("[Models]", chatModels);
+      const resJson = (await res.json()) as OpenAIListModelResponse;
+      const chatModels = resJson.data?.filter(
+        (m) => m.id.startsWith("gpt-") || m.id.startsWith("chatgpt-"),
+      );
+      console.log("[Models]", chatModels);
 
-    if (!chatModels) {
-      return [];
+      if (!chatModels || chatModels.length === 0) {
+        return [getGatewayDefaultModel()];
+      }
+
+      //由于目前 OpenAI 的 disableListModels 默认为 true，所以当前实际不会运行到这场
+      let seq = 1000; //同 Constant.ts 中的排序保持一致
+      return chatModels.map((m) => ({
+        name: m.id,
+        available: true,
+        sorted: seq++,
+        provider: {
+          id: "openai",
+          providerName: "OpenAI",
+          providerType: "openai",
+          sorted: 1,
+        },
+      }));
+    } catch (error) {
+      console.error("[Models] Failed to fetch models:", error);
+      return [getGatewayDefaultModel()];
     }
-
-    //由于目前 OpenAI 的 disableListModels 默认为 true，所以当前实际不会运行到这场
-    let seq = 1000; //同 Constant.ts 中的排序保持一致
-    return chatModels.map((m) => ({
-      name: m.id,
-      available: true,
-      sorted: seq++,
-      provider: {
-        id: "openai",
-        providerName: "OpenAI",
-        providerType: "openai",
-        sorted: 1,
-      },
-    }));
   }
 }
+
+function getGatewayDefaultModel(): LLMModel {
+  return {
+    name: "auto",
+    displayName: "默认(网关)",
+    available: true,
+    sorted: 0,
+    provider: {
+      id: "openai",
+      providerName: "OpenAI",
+      providerType: "openai",
+      sorted: 1,
+    },
+  };
+}
+
 export { OpenaiPath };

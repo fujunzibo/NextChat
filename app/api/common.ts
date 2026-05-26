@@ -40,6 +40,11 @@ export async function requestOpenai(req: NextRequest) {
     baseUrl = baseUrl.slice(0, -1);
   }
 
+  // 避免路径重复：如果 baseUrl 已经包含 /v1，那么从 path 中移除 /v1 前缀
+  if (baseUrl.endsWith("/v1") && path.startsWith("v1/")) {
+    path = path.substring(3);
+  }
+
   console.log("[Proxy] ", path);
   console.log("[Base Url]", baseUrl);
 
@@ -108,38 +113,50 @@ export async function requestOpenai(req: NextRequest) {
     signal: controller.signal,
   };
 
-  // #1815 try to refuse gpt4 request
-  if (serverConfig.customModels && req.body) {
+  // 解析请求体并移除 model 字段，与 OneRouter 测试一致
+  let jsonBody: { model?: string } | null = null;
+  if (req.body) {
     try {
       const clonedBody = await req.text();
-      fetchOptions.body = clonedBody;
 
-      const jsonBody = JSON.parse(clonedBody) as { model?: string };
+      // 解析请求体
+      jsonBody = JSON.parse(clonedBody) as { model?: string };
 
-      // not undefined and is false
-      if (
-        isModelNotavailableInServer(
-          serverConfig.customModels,
-          jsonBody?.model as string,
-          [
-            ServiceProvider.OpenAI,
-            ServiceProvider.Azure,
-            jsonBody?.model as string, // support provider-unspecified model
-          ],
-        )
-      ) {
-        return NextResponse.json(
-          {
-            error: true,
-            message: `you are not allowed to use ${jsonBody?.model} model`,
-          },
-          {
-            status: 403,
-          },
-        );
+      // 与 OneRouter 测试一致：移除 model 字段，由网关自动选择模型
+      if (jsonBody?.model) {
+        delete jsonBody.model;
+        console.log("[Proxy] Removed model field from request body");
       }
+
+      // 重新序列化请求体
+      fetchOptions.body = JSON.stringify(jsonBody);
     } catch (e) {
-      console.error("[OpenAI] gpt4 filter", e);
+      console.error("[OpenAI] parse request body", e);
+    }
+  }
+
+  // #1815 try to refuse gpt4 request
+  if (serverConfig.customModels && jsonBody?.model) {
+    if (
+      isModelNotavailableInServer(
+        serverConfig.customModels,
+        jsonBody.model as string,
+        [
+          ServiceProvider.OpenAI,
+          ServiceProvider.Azure,
+          jsonBody.model as string, // support provider-unspecified model
+        ],
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error: true,
+          message: `you are not allowed to use ${jsonBody.model} model`,
+        },
+        {
+          status: 403,
+        },
+      );
     }
   }
 

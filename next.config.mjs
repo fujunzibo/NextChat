@@ -82,8 +82,9 @@ if (mode !== "export") {
       },
       {
         source: "/api/proxy/openai/:path*",
-        destination: "https://api.openai.com/:path*",
+        destination: "https://www.onerouter.tech/:path*",
       },
+      // 不再需要代理，使用服务器端 BASE_URL 配置直接转发
       {
         source: "/api/proxy/anthropic/:path*",
         destination: "https://api.anthropic.com/:path*",
