@@ -31,12 +31,12 @@ jobs:
       - name: get version
         id: version
         run: |
-          $VERSION = "${{ inputs.version }}"
-          if ([string]::IsNullOrEmpty($VERSION)) {
-            $VERSION = node -p "require('./src-tauri/tauri.conf.json').package.version"
-          }
-          echo "PACKAGE_VERSION=v$VERSION" >> $env:GITHUB_ENV
-          echo "package_version=$VERSION" >> $env:GITHUB_OUTPUT
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(node -p "require('./src-tauri/tauri.conf.json').package.version")
+          fi
+          echo "PACKAGE_VERSION=v$VERSION" >> $GITHUB_ENV
+          echo "package_version=$VERSION" >> $GITHUB_OUTPUT
           echo "Release version: $VERSION"
 
       - name: create release
