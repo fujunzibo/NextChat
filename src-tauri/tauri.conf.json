@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "build": {
     "beforeBuildCommand": "yarn export",
-    "beforeDevCommand": "yarn export:dev",
+    "beforeDevCommand": "yarn app:dev",
     "devPath": "http://localhost:3000",
     "distDir": "../out",
     "withGlobalTauri": true

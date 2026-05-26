@@ -124,7 +124,7 @@ import { isEmpty } from "lodash-es";
 import { getModelProvider } from "../utils/model";
 import { RealtimeChat } from "@/app/components/realtime-chat";
 import clsx from "clsx";
-import { getAvailableClientsCount, isMcpEnabled } from "../mcp/actions";
+// import { getAvailableClientsCount, isMcpEnabled } from "../mcp/actions";
 
 const localStorage = safeLocalStorage();
 
@@ -135,31 +135,33 @@ const Markdown = dynamic(async () => (await import("./markdown")).Markdown, {
 });
 
 const MCPAction = () => {
+  // 暂时禁用 MCP 功能
   const navigate = useNavigate();
   const [count, setCount] = useState<number>(0);
   const [mcpEnabled, setMcpEnabled] = useState(false);
 
-  useEffect(() => {
-    const checkMcpStatus = async () => {
-      const enabled = await isMcpEnabled();
-      setMcpEnabled(enabled);
-      if (enabled) {
-        const count = await getAvailableClientsCount();
-        setCount(count);
-      }
-    };
-    checkMcpStatus();
-  }, []);
+  // useEffect(() => {
+  //   const checkMcpStatus = async () => {
+  //     const enabled = await isMcpEnabled();
+  //     setMcpEnabled(enabled);
+  //     if (enabled) {
+  //       const count = await getAvailableClientsCount();
+  //       setCount(count);
+  //     }
+  //   };
+  //   checkMcpStatus();
+  // }, []);
 
   if (!mcpEnabled) return null;
 
-  return (
-    <ChatAction
-      onClick={() => navigate(Path.McpMarket)}
-      text={`MCP${count ? ` (${count})` : ""}`}
-      icon={<McpToolIcon />}
-    />
-  );
+  // return (
+  //   <ChatAction
+  //     onClick={() => navigate(Path.McpMarket)}
+  //     text={`MCP${count ? ` (${count})` : ""}`}
+  //     icon={<McpToolIcon />}
+  //   />
+  // );
+  return null;
 };
 
 export function SessionConfigModel(props: { onClose: () => void }) {
