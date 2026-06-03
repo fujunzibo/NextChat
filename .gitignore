@@ -40,7 +40,6 @@ dev
 .idea
 
 # docker-compose env files
-.env
 
 *.key
 *.key.pub
@@ -49,3 +48,4 @@ masks.json
 
 # mcp config
 app/mcp/mcp_config.json
+config.bat
